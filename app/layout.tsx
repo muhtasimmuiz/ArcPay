@@ -14,7 +14,14 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "ArcPay Treasury",
-  description: "Professional Web3 treasury dashboard for ArcPay."
+  description: "Professional Web3 treasury dashboard for ArcPay.",
+  applicationName: "ArcPay Treasury",
+  keywords: ["ArcPay", "Treasury", "Web3", "Dashboard", "ARC Testnet"],
+  openGraph: {
+    title: "ArcPay Treasury",
+    description: "Professional Web3 treasury dashboard for ArcPay.",
+    siteName: "ArcPay Treasury"
+  }
 };
 
 export default function RootLayout({
