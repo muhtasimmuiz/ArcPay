@@ -13,3 +13,5 @@ coverage
 dist
 out
 tsconfig.tsbuildinfo
+.next-dev.log
+.next-dev.err.log

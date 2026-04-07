@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 
@@ -31,10 +31,14 @@ type SendFormState = {
   error: string;
 };
 
+type SyncStatus = "idle" | "success" | "error";
+
 type ArcEthereumProvider = ethers.Eip1193Provider & {
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
 };
+
+const MANUAL_DISCONNECT_KEY = "arcpay:wallet:manually-disconnected";
 
 declare global {
   interface Window {
@@ -48,6 +52,53 @@ function getInjectedProvider() {
   }
 
   return window.ethereum ?? null;
+}
+
+function getManualDisconnectFlag() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.sessionStorage.getItem(MANUAL_DISCONNECT_KEY) === "true";
+}
+
+function setManualDisconnectFlag(value: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (value) {
+    window.sessionStorage.setItem(MANUAL_DISCONNECT_KEY, "true");
+    return;
+  }
+
+  window.sessionStorage.removeItem(MANUAL_DISCONNECT_KEY);
+}
+
+function normalizeWalletAddress(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed || !ethers.isAddress(trimmed)) {
+    return null;
+  }
+
+  return ethers.getAddress(trimmed);
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 async function ensureArcNetwork(provider: ArcEthereumProvider) {
@@ -90,6 +141,10 @@ export function useArcTreasury({
   summaryStats: SummaryStat[];
   treasurySnapshot: TreasurySnapshot;
 }) {
+  const readProviderRef = useRef(
+    new ethers.JsonRpcProvider(ARC_TESTNET.rpcUrl, ARC_TESTNET.chainId)
+  );
+  const lastSyncErrorAtRef = useRef(0);
   const [copied, setCopied] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isBalanceLoading, setIsBalanceLoading] = useState(false);
@@ -97,22 +152,30 @@ export function useArcTreasury({
   const [isSending, setIsSending] = useState(false);
   const [isReceivePending, setIsReceivePending] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [currentChainId, setCurrentChainId] = useState<number | null>(null);
   const [balance, setBalance] = useState<bigint | null>(null);
   const [historyItems, setHistoryItems] = useState<ActivityItem[]>([]);
   const [txState, setTxState] = useState<TxState>(null);
+  const [gasEstimate, setGasEstimate] = useState("--");
+  const [isEstimatingGas, setIsEstimatingGas] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  const [hasLoadedBalance, setHasLoadedBalance] = useState(false);
+  const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
   const [sendForm, setSendForm] = useState<SendFormState>({
     recipient: "",
     amount: "",
     error: ""
   });
 
-  const fetchTransferHistory = useCallback(async (provider: ethers.BrowserProvider, address: string) => {
+  const fetchTransferHistory = useCallback(async (provider: ethers.Provider, address: string) => {
     const checksummed = ethers.getAddress(address);
     const topicAddress = ethers.zeroPadValue(checksummed, 32);
     const latestBlock = await provider.getBlockNumber();
     const fromBlock = Math.max(0, latestBlock - HISTORY_BLOCK_WINDOW);
     const iface = new ethers.Interface(USDC_ABI);
 
+    // Rebuild the recent ledger directly from Transfer logs so the dashboard stays
+    // consistent with onchain data even without an indexer backend.
     const [incomingLogs, outgoingLogs] = await Promise.all([
       provider.getLogs({
         address: ARC_TESTNET.usdc.address,
@@ -188,31 +251,76 @@ export function useArcTreasury({
       }
 
       const browserProvider = new ethers.BrowserProvider(injected);
-      setIsBalanceLoading(true);
-      setIsActivityLoading(true);
+      const readProvider = readProviderRef.current;
+      const network = await browserProvider.getNetwork();
+      setCurrentChainId(Number(network.chainId));
+      setIsBalanceLoading(!hasLoadedBalance);
+      setIsActivityLoading(!hasLoadedHistory);
 
-      try {
-        const usdcContract = new ethers.Contract(ARC_TESTNET.usdc.address, USDC_ABI, browserProvider);
-        const [nextBalance, nextHistory] = await Promise.all([
-          usdcContract.balanceOf(nextAddress) as Promise<bigint>,
-          fetchTransferHistory(browserProvider, nextAddress)
-        ]);
+      const browserUsdcContract = new ethers.Contract(ARC_TESTNET.usdc.address, USDC_ABI, browserProvider);
+      const [balanceResult, historyResult] = await Promise.allSettled([
+        withTimeout(
+          browserUsdcContract.balanceOf(nextAddress) as Promise<bigint>,
+          8000,
+          "Arc balance lookup timed out."
+        ),
+        withTimeout(
+          fetchTransferHistory(readProvider, nextAddress),
+          10000,
+          "Arc transaction history lookup timed out."
+        )
+      ]);
 
-        setBalance(nextBalance);
-        setHistoryItems(nextHistory);
-      } catch (error) {
-        console.error(error);
-        pushToast({
-          tone: "error",
-          title: "Sync failed",
-          description: "Unable to refresh the Arc Testnet balance or transaction history."
-        });
-      } finally {
+      let hasBalanceFailure = false;
+      let hasHistoryFailure = false;
+
+      if (balanceResult.status === "fulfilled") {
+        setBalance(balanceResult.value);
+        setSyncStatus("success");
+        setHasLoadedBalance(true);
+      } else {
+        console.error(balanceResult.reason);
+        setBalance(null);
+        setSyncStatus("error");
+        hasBalanceFailure = true;
+      }
+
+      if (historyResult.status === "fulfilled") {
+        setHistoryItems(historyResult.value);
+        setHasLoadedHistory(true);
+      } else {
+        console.error(historyResult.reason);
+        setHistoryItems([]);
+        setHasLoadedHistory(true);
+        hasHistoryFailure = true;
+      }
+
+      if (hasBalanceFailure) {
+        const now = Date.now();
+
+        if (now - lastSyncErrorAtRef.current > 6000) {
+          lastSyncErrorAtRef.current = now;
+          pushToast({
+            tone: "error",
+            title: "Sync failed",
+            description: "Unable to refresh the Arc Testnet balance right now. Wallet actions are still available."
+          });
+        }
+      }
+
+      if (!hasBalanceFailure && hasHistoryFailure) {
+        setSyncStatus("success");
+      }
+
+      if (!hasLoadedBalance || balanceResult.status === "fulfilled") {
         setIsBalanceLoading(false);
+      }
+
+      if (!hasLoadedHistory || historyResult.status === "fulfilled") {
         setIsActivityLoading(false);
       }
     },
-    [fetchTransferHistory, pushToast, walletAddress]
+    [fetchTransferHistory, hasLoadedBalance, hasLoadedHistory, pushToast, walletAddress]
   );
 
   const connectWallet = useCallback(async () => {
@@ -227,10 +335,13 @@ export function useArcTreasury({
     }
 
     setIsConnecting(true);
+    setManualDisconnectFlag(false);
 
     try {
       await ensureArcNetwork(injected);
       const browserProvider = new ethers.BrowserProvider(injected);
+      const network = await browserProvider.getNetwork();
+      setCurrentChainId(Number(network.chainId));
       const accounts = (await browserProvider.send("eth_requestAccounts", [])) as string[];
 
       if (!accounts.length) {
@@ -278,6 +389,12 @@ export function useArcTreasury({
 
     async function restoreSession() {
       try {
+        if (getManualDisconnectFlag()) {
+          return;
+        }
+
+        // Restore any previously authorized wallet so returning users land on live
+        // treasury data without manually reconnecting MetaMask each time.
         const accounts = (await availableProvider.request({ method: "eth_accounts" })) as string[];
         if (!accounts.length || cancelled) {
           return;
@@ -285,6 +402,7 @@ export function useArcTreasury({
 
         const browserProvider = new ethers.BrowserProvider(availableProvider);
         const network = await browserProvider.getNetwork();
+        setCurrentChainId(Number(network.chainId));
         const nextAddress = ethers.getAddress(accounts[0]);
         setWalletAddress(nextAddress);
 
@@ -313,19 +431,58 @@ export function useArcTreasury({
       const nextAccounts = Array.isArray(accounts) ? (accounts as string[]) : [];
 
       if (!nextAccounts.length) {
+        setManualDisconnectFlag(true);
         setWalletAddress(null);
+        setCurrentChainId(null);
         setBalance(null);
         setHistoryItems([]);
         setTxState(null);
+        setGasEstimate("--");
+        setIsEstimatingGas(false);
+        setSyncStatus("idle");
+        setHasLoadedBalance(false);
+        setHasLoadedHistory(false);
+        setSendForm({
+          recipient: "",
+          amount: "",
+          error: ""
+        });
+        pushToast({
+          tone: "error",
+          title: "Wallet disconnected",
+          description: "MetaMask disconnected. Reconnect your treasury wallet to resume activity."
+        });
         return;
       }
 
-      const nextAddress = ethers.getAddress(nextAccounts[0]);
+      const nextAddress = normalizeWalletAddress(nextAccounts[0]);
+      if (!nextAddress) {
+        return;
+      }
       setWalletAddress(nextAddress);
       void refreshWalletData(nextAddress);
     };
 
-    const handleChainChanged = () => {
+    const handleChainChanged = (chainId: unknown) => {
+      let nextChainId: number | null = null;
+
+      if (typeof chainId === "string") {
+        nextChainId = Number(BigInt(chainId));
+        setCurrentChainId(nextChainId);
+      }
+
+      if (nextChainId !== null && nextChainId !== ARC_TESTNET.chainId) {
+        setSendForm((current) => ({
+          ...current,
+          error: "Wrong network detected. Switch back to Arc Testnet before sending."
+        }));
+        pushToast({
+          tone: "error",
+          title: "Wrong network",
+          description: "MetaMask is not on Arc Testnet. Treasury transfers are temporarily disabled."
+        });
+      }
+
       if (walletAddress) {
         void refreshWalletData(walletAddress);
       }
@@ -338,9 +495,93 @@ export function useArcTreasury({
       injected.removeListener?.("accountsChanged", handleAccountsChanged);
       injected.removeListener?.("chainChanged", handleChainChanged);
     };
-  }, [refreshWalletData, walletAddress]);
+  }, [pushToast, refreshWalletData, walletAddress]);
+
+  useEffect(() => {
+    if (!walletAddress || currentChainId !== ARC_TESTNET.chainId || isSending) {
+      return;
+    }
+
+    // Keep treasury metrics fresh, but pause polling while a transfer is in flight to
+    // avoid racing pending state updates against confirmed onchain data.
+    const intervalId = window.setInterval(() => {
+      void refreshWalletData(walletAddress);
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [currentChainId, isSending, refreshWalletData, walletAddress]);
+
+  useEffect(() => {
+    if (!walletAddress || currentChainId !== ARC_TESTNET.chainId) {
+      setGasEstimate("--");
+      setIsEstimatingGas(false);
+      return;
+    }
+
+    const recipient = sendForm.recipient.trim();
+    const amount = sendForm.amount.trim();
+
+    if (!recipient || !amount || !ethers.isAddress(recipient) || Number(amount) <= 0) {
+      setGasEstimate("--");
+      setIsEstimatingGas(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      const injected = getInjectedProvider();
+      if (!injected) {
+        return;
+      }
+
+      setIsEstimatingGas(true);
+
+      try {
+        const parsedAmount = ethers.parseUnits(amount, ARC_TESTNET.usdc.decimals);
+        const browserProvider = new ethers.BrowserProvider(injected);
+        const signer = await browserProvider.getSigner();
+        const contract = new ethers.Contract(ARC_TESTNET.usdc.address, USDC_ABI, signer);
+        // Arc gas is charged in stable-value terms, so we estimate using the current
+        // network fee overrides to preview the real treasury cost before confirmation.
+        const feeOverrides = await buildArcFeeOverrides(browserProvider);
+        const gasLimit = await contract.transfer.estimateGas(recipient, parsedAmount, feeOverrides);
+        const gasPrice =
+          "maxFeePerGas" in feeOverrides
+            ? feeOverrides.maxFeePerGas
+            : "gasPrice" in feeOverrides
+              ? feeOverrides.gasPrice
+              : null;
+
+        if (!cancelled && gasPrice) {
+          const totalFee = gasLimit * gasPrice;
+          setGasEstimate(`${ethers.formatUnits(totalFee, ARC_TESTNET.nativeCurrency.decimals)} USDC`);
+        }
+      } catch {
+        if (!cancelled) {
+          setGasEstimate("Unavailable");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsEstimatingGas(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [currentChainId, sendForm.amount, sendForm.recipient, walletAddress]);
 
   const dynamicSummaryStats = useMemo<SummaryStat[]>(() => {
+    if (!walletAddress) {
+      return [
+        { label: "Available treasury", value: "--" },
+        { label: "Pending settlements", value: "--" },
+        { label: "Yield status", value: "--" }
+      ];
+    }
+
     const available = balance === null ? "--" : `$${formatTokenAmount(balance)}`;
     const pendingAmount =
       txState?.status === "pending" ? `$${txState.amount}` : summaryStats[1]?.value ?? "$0.00";
@@ -350,12 +591,21 @@ export function useArcTreasury({
       { label: "Pending settlements", value: pendingAmount },
       summaryStats[2] ?? { label: "Yield status", value: "--" }
     ];
-  }, [balance, summaryStats, txState]);
+  }, [balance, summaryStats, txState, walletAddress]);
 
-  const currentBalanceLabel =
-    balance === null ? treasurySnapshot.balance : `$${formatTokenAmount(balance)}`;
+  const currentBalanceLabel = !walletAddress
+    ? "--"
+    : balance === null
+      ? "--"
+      : `$${formatTokenAmount(balance)}`;
 
   const walletButtonLabel = walletAddress ? truncateAddress(walletAddress) : "Connect MetaMask";
+  const isWrongNetwork = currentChainId !== null && currentChainId !== ARC_TESTNET.chainId;
+  const networkStatusLabel = walletAddress
+    ? isWrongNetwork
+      ? "Wrong Network"
+      : "Connected"
+    : "Disconnected";
 
   async function copyWallet() {
     if (!walletAddress) {
@@ -385,7 +635,7 @@ export function useArcTreasury({
   }
 
   async function sendUsdc() {
-    const recipient = sendForm.recipient.trim();
+    const recipient = normalizeWalletAddress(sendForm.recipient);
     const amount = sendForm.amount.trim();
 
     if (!walletAddress) {
@@ -393,8 +643,32 @@ export function useArcTreasury({
       return false;
     }
 
-    if (!ethers.isAddress(recipient)) {
+    if (isSending || txState?.status === "pending") {
+      setSendForm((current) => ({
+        ...current,
+        error: "A transfer is already pending. Wait for confirmation before sending again."
+      }));
+      return false;
+    }
+
+    if (isWrongNetwork) {
+      setSendForm((current) => ({
+        ...current,
+        error: "Switch MetaMask to Arc Testnet before sending treasury funds."
+      }));
+      return false;
+    }
+
+    if (!recipient) {
       setSendForm((current) => ({ ...current, error: "Enter a valid recipient address." }));
+      return false;
+    }
+
+    if (recipient === walletAddress) {
+      setSendForm((current) => ({
+        ...current,
+        error: "Recipient address must be different from the connected treasury wallet."
+      }));
       return false;
     }
 
@@ -449,7 +723,7 @@ export function useArcTreasury({
 
       const receipt = await tx.wait();
 
-      if (!receipt || receipt.status !== BigInt(1)) {
+      if (!receipt || receipt.status !== 1) {
         throw new Error("Transaction failed onchain.");
       }
 
@@ -478,7 +752,11 @@ export function useArcTreasury({
     } catch (error) {
       console.error(error);
       const message =
-        error instanceof Error ? error.message : "The transfer could not be completed.";
+        error instanceof Error
+          ? error.message.includes("user rejected")
+            ? "Transaction rejected in MetaMask."
+            : error.message
+          : "The transfer could not be completed.";
 
       setTxState({
         hash: `failed-${Date.now()}`,
@@ -510,6 +788,31 @@ export function useArcTreasury({
     }
   }
 
+  function disconnectWallet() {
+    setManualDisconnectFlag(true);
+    setWalletAddress(null);
+    setCurrentChainId(null);
+    setBalance(null);
+    setHistoryItems([]);
+    setTxState(null);
+    setGasEstimate("--");
+    setIsEstimatingGas(false);
+    setSyncStatus("idle");
+    setHasLoadedBalance(false);
+    setHasLoadedHistory(false);
+    setSendForm({
+      recipient: "",
+      amount: "",
+      error: ""
+    });
+
+    pushToast({
+      tone: "success",
+      title: "Wallet disconnected",
+      description: "The connected wallet has been removed from this dashboard session."
+    });
+  }
+
   return {
     copied,
     walletAddress,
@@ -525,7 +828,13 @@ export function useArcTreasury({
     txState,
     sendForm,
     balanceDisplay: balance === null ? "--" : formatTokenAmount(balance),
+    gasEstimate,
+    isEstimatingGas,
+    isWrongNetwork,
+    syncStatus,
+    networkStatusLabel,
     connectWallet,
+    disconnectWallet,
     copyWallet,
     receiveUsdc,
     refreshWalletData,

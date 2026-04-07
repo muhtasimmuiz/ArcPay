@@ -1,19 +1,34 @@
 import { ethers } from "ethers";
 
+function getPublicEnv(name: string, fallback: string) {
+  const value = process.env[name];
+  return value && value.trim().length > 0 ? value : fallback;
+}
+
+function getPublicNumberEnv(name: string, fallback: number) {
+  const value = process.env[name];
+  const parsed = value ? Number(value) : Number.NaN;
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export const ARC_TESTNET = {
-  chainId: 5042002,
-  chainName: "Arc Testnet",
-  rpcUrl: "https://rpc.testnet.arc.network",
-  blockExplorerUrl: "https://testnet.arcscan.app",
+  chainId: getPublicNumberEnv("NEXT_PUBLIC_ARC_CHAIN_ID", 5042002),
+  chainName: getPublicEnv("NEXT_PUBLIC_ARC_CHAIN_NAME", "Arc Testnet"),
+  rpcUrl: getPublicEnv("NEXT_PUBLIC_ARC_RPC_URL", "https://rpc.testnet.arc.network"),
+  blockExplorerUrl: getPublicEnv("NEXT_PUBLIC_ARC_EXPLORER_URL", "https://testnet.arcscan.app"),
   nativeCurrency: {
-    name: "USDC",
-    symbol: "USDC",
-    decimals: 18
+    name: getPublicEnv("NEXT_PUBLIC_ARC_NATIVE_CURRENCY_NAME", "USDC"),
+    symbol: getPublicEnv("NEXT_PUBLIC_ARC_NATIVE_CURRENCY_SYMBOL", "USDC"),
+    decimals: getPublicNumberEnv("NEXT_PUBLIC_ARC_NATIVE_CURRENCY_DECIMALS", 18)
   },
   usdc: {
-    address: "0x3600000000000000000000000000000000000000",
-    decimals: 6,
-    symbol: "USDC"
+    address: getPublicEnv(
+      "NEXT_PUBLIC_ARC_USDC_ADDRESS",
+      "0x3600000000000000000000000000000000000000"
+    ),
+    decimals: getPublicNumberEnv("NEXT_PUBLIC_ARC_USDC_DECIMALS", 6),
+    symbol: getPublicEnv("NEXT_PUBLIC_ARC_USDC_SYMBOL", "USDC")
   }
 } as const;
 
@@ -26,7 +41,7 @@ export const USDC_ABI = [
 export const TRANSFER_EVENT_TOPIC = ethers.id("Transfer(address,address,uint256)");
 export const MIN_ARC_MAX_FEE_PER_GAS = ethers.parseUnits("160", "gwei");
 export const DEFAULT_PRIORITY_FEE = ethers.parseUnits("1", "gwei");
-export const HISTORY_BLOCK_WINDOW = 50_000;
+export const HISTORY_BLOCK_WINDOW = getPublicNumberEnv("NEXT_PUBLIC_ARC_HISTORY_BLOCK_WINDOW", 50_000);
 
 export function truncateAddress(address: string, start = 6, end = 4) {
   if (!address) {

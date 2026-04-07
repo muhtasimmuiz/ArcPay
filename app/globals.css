@@ -29,6 +29,17 @@ body {
   line-height: 1.5;
 }
 
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(34, 211, 238, 0.05), transparent 24%),
+    radial-gradient(circle at 88% 12%, rgba(16, 185, 129, 0.04), transparent 20%);
+  opacity: 0.85;
+}
+
 .font-display {
   font-family: var(--font-display), sans-serif;
 }
@@ -46,6 +57,20 @@ button:focus-visible,
 a:focus-visible {
   outline: 2px solid rgba(103, 232, 249, 0.8);
   outline-offset: 3px;
+}
+
+button {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+button:active {
+  transform: translateY(1px) scale(0.99);
 }
 
 a {

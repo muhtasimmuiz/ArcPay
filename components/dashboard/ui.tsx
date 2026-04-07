@@ -18,7 +18,7 @@ export function GlassCard({
 }) {
   return (
     <div
-      className={`rounded-3xl border border-slate-800/80 bg-slate-900/50 backdrop-blur-md shadow-glow ${className}`}
+      className={`rounded-3xl border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.84),rgba(15,23,42,0.58))] backdrop-blur-md shadow-panel ${className}`}
     >
       {children}
     </div>
@@ -109,6 +109,8 @@ export function ConfirmationModal({
   recipient,
   amount,
   balance,
+  gasEstimate,
+  isEstimatingGas,
   error,
   onRecipientChange,
   onAmountChange,
@@ -120,6 +122,8 @@ export function ConfirmationModal({
   recipient: string;
   amount: string;
   balance: string;
+  gasEstimate: string;
+  isEstimatingGas: boolean;
   error: string;
   onRecipientChange: (value: string) => void;
   onAmountChange: (value: string) => void;
@@ -132,7 +136,7 @@ export function ConfirmationModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-md">
-      <div className="w-full max-w-lg rounded-[28px] border border-slate-800 bg-slate-950/95 p-6 shadow-2xl">
+      <div className="w-full max-w-lg rounded-[28px] border border-slate-800 bg-[linear-gradient(180deg,rgba(2,6,23,0.98),rgba(15,23,42,0.94))] p-6 shadow-2xl">
         <div className="flex items-start gap-4">
           <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3 text-amber-300">
             <TriangleAlert className="h-5 w-5" />
@@ -154,7 +158,7 @@ export function ConfirmationModal({
               value={recipient}
               onChange={(event) => onRecipientChange(event.target.value)}
               placeholder="0x..."
-              className="w-full rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/40"
+              className="w-full rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/40 focus:bg-slate-900"
             />
           </label>
 
@@ -165,7 +169,7 @@ export function ConfirmationModal({
               onChange={(event) => onAmountChange(event.target.value)}
               placeholder="0.00"
               inputMode="decimal"
-              className="w-full rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/40"
+              className="w-full rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/40 focus:bg-slate-900"
             />
           </label>
 
@@ -173,6 +177,12 @@ export function ConfirmationModal({
             <div className="flex items-center justify-between gap-4 text-sm">
               <span className="text-slate-500">Available balance</span>
               <span className="font-semibold text-slate-100">{balance} USDC</span>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-4 text-sm">
+              <span className="text-slate-500">Estimated network fee</span>
+              <span className="font-medium text-slate-200">
+                {isEstimatingGas ? "Estimating..." : gasEstimate}
+              </span>
             </div>
             <div className="mt-3 flex items-center justify-between gap-4 text-sm">
               <span className="text-slate-500">Network</span>
@@ -192,7 +202,7 @@ export function ConfirmationModal({
             type="button"
             onClick={onCancel}
             disabled={isProcessing}
-            className="rounded-2xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-sm font-semibold text-slate-200 transition hover:border-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-2xl border border-slate-700 bg-slate-900/80 px-4 py-3 text-sm font-semibold text-slate-200 transition hover:-translate-y-0.5 hover:border-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Cancel
           </button>
@@ -200,7 +210,7 @@ export function ConfirmationModal({
             type="button"
             onClick={onConfirm}
             disabled={isProcessing}
-            className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-2xl border border-emerald-400/25 bg-[linear-gradient(180deg,rgba(16,185,129,0.24),rgba(5,150,105,0.14))] px-4 py-3 text-sm font-semibold text-emerald-200 shadow-action transition hover:-translate-y-0.5 hover:border-emerald-300/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isProcessing ? "Processing..." : "Confirm & Send"}
           </button>

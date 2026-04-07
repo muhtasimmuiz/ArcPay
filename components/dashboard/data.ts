@@ -17,13 +17,13 @@ export type NavLink = {
 };
 
 export type VaultItem = {
+  id: "predictable-gas" | "instant-liquidity" | "vault-security";
   label: string;
   description: string;
   icon: LucideIcon;
-  active?: boolean;
 };
 
-export type ActivityStatus = "success" | "completed" | "finalized" | "pending";
+export type ActivityStatus = "success" | "completed" | "finalized" | "pending" | "failed";
 
 export type ActivityItem = {
   id: string;
@@ -76,17 +76,19 @@ export const navLinks: NavLink[] = [
 
 export const vaultItems: VaultItem[] = [
   {
+    id: "predictable-gas",
     label: "Predictable Gas",
     description: "Track stable USD-priced execution costs.",
-    icon: CalendarClock,
-    active: true
+    icon: CalendarClock
   },
   {
+    id: "instant-liquidity",
     label: "Instant Liquidity",
     description: "Access reserve capital without treasury delays.",
     icon: Wallet
   },
   {
+    id: "vault-security",
     label: "Vault Security",
     description: "Monitor controls, approvals, and protection layers.",
     icon: Shield
