@@ -21,6 +21,7 @@ type TreasuryOverviewProps = {
   syncStatus: "idle" | "success" | "error";
   networkStatusLabel: string;
   onConnect: () => void;
+  onSwitchNetwork: () => void;
   onOpenSend: () => void;
   onReceive: () => void;
   treasurySnapshot: TreasurySnapshot;
@@ -42,6 +43,7 @@ export function TreasuryOverview({
   syncStatus,
   networkStatusLabel,
   onConnect,
+  onSwitchNetwork,
   onOpenSend,
   onReceive,
   treasurySnapshot,
@@ -134,7 +136,7 @@ export function TreasuryOverview({
             </p>
             <button
               type="button"
-              onClick={onConnect}
+              onClick={onSwitchNetwork}
               className="mt-3 inline-flex items-center gap-2 rounded-full border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-amber-100 transition hover:bg-amber-500/15"
             >
               Switch to Arc Testnet

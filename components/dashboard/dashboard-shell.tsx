@@ -242,6 +242,7 @@ export function DashboardShell({
               syncStatus={treasury.syncStatus}
               networkStatusLabel={treasury.networkStatusLabel}
               onConnect={treasury.connectWallet}
+              onSwitchNetwork={treasury.switchToArcNetwork}
               onOpenSend={openSendFlow}
               onReceive={triggerReceive}
               treasurySnapshot={treasurySnapshotProp}

@@ -110,9 +110,16 @@ async function ensureArcNetwork(provider: ArcEthereumProvider) {
       params: [{ chainId: chainIdHex }]
     });
   } catch (error) {
-    const errorCode = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+    const errorCode =
+      typeof error === "object" && error !== null && "code" in error ? Number(error.code) : undefined;
+    const errorMessage =
+      error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    const shouldAddChain =
+      errorCode === 4902 ||
+      errorMessage.toLowerCase().includes("unrecognized chain") ||
+      errorMessage.toLowerCase().includes("unknown chain");
 
-    if (errorCode === 4902) {
+    if (shouldAddChain) {
       await provider.request({
         method: "wallet_addEthereumChain",
         params: [
@@ -124,6 +131,11 @@ async function ensureArcNetwork(provider: ArcEthereumProvider) {
             nativeCurrency: ARC_TESTNET.nativeCurrency
           }
         ]
+      });
+
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: chainIdHex }]
       });
       return;
     }
@@ -368,6 +380,55 @@ export function useArcTreasury({
       setIsConnecting(false);
     }
   }, [pushToast, refreshWalletData]);
+
+  const switchToArcNetwork = useCallback(async () => {
+    const injected = getInjectedProvider();
+    if (!injected) {
+      pushToast({
+        tone: "error",
+        title: "MetaMask not detected",
+        description: "Install MetaMask to add and switch to Arc Testnet."
+      });
+      return false;
+    }
+
+    setIsConnecting(true);
+
+    try {
+      await ensureArcNetwork(injected);
+      const browserProvider = new ethers.BrowserProvider(injected);
+      const network = await browserProvider.getNetwork();
+      setCurrentChainId(Number(network.chainId));
+
+      if (walletAddress && Number(network.chainId) === ARC_TESTNET.chainId) {
+        await refreshWalletData(walletAddress);
+      }
+
+      pushToast({
+        tone: "success",
+        title: "Network switched",
+        description: "MetaMask is now connected to Arc Testnet."
+      });
+      return true;
+    } catch (error) {
+      console.error(error);
+      const message =
+        error instanceof Error
+          ? error.message.includes("user rejected")
+            ? "The Arc Testnet switch was rejected in MetaMask."
+            : "MetaMask could not add or switch to Arc Testnet automatically."
+          : "MetaMask could not add or switch to Arc Testnet automatically.";
+
+      pushToast({
+        tone: "error",
+        title: "Network switch failed",
+        description: message
+      });
+      return false;
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [pushToast, refreshWalletData, walletAddress]);
 
   useEffect(() => {
     if (!copied) {
@@ -834,6 +895,7 @@ export function useArcTreasury({
     syncStatus,
     networkStatusLabel,
     connectWallet,
+    switchToArcNetwork,
     disconnectWallet,
     copyWallet,
     receiveUsdc,
