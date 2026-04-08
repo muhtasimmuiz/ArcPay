@@ -16,6 +16,12 @@ export const ARC_TESTNET = {
   chainId: getPublicNumberEnv("NEXT_PUBLIC_ARC_CHAIN_ID", 5042002),
   chainName: getPublicEnv("NEXT_PUBLIC_ARC_CHAIN_NAME", "Arc Testnet"),
   rpcUrl: getPublicEnv("NEXT_PUBLIC_ARC_RPC_URL", "https://rpc.testnet.arc.network"),
+  rpcUrls: [
+    getPublicEnv("NEXT_PUBLIC_ARC_RPC_URL", "https://rpc.testnet.arc.network"),
+    "https://rpc.blockdaemon.testnet.arc.network",
+    "https://rpc.drpc.testnet.arc.network",
+    "https://rpc.quicknode.testnet.arc.network"
+  ],
   blockExplorerUrl: getPublicEnv("NEXT_PUBLIC_ARC_EXPLORER_URL", "https://testnet.arcscan.app"),
   nativeCurrency: {
     name: getPublicEnv("NEXT_PUBLIC_ARC_NATIVE_CURRENCY_NAME", "USDC"),

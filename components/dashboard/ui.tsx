@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckCircle2, TriangleAlert, X } from "lucide-react";
+import type { WalletOption } from "@/components/dashboard/use-arc-treasury";
 
 export type Toast = {
   id: number;
@@ -214,6 +215,82 @@ export function ConfirmationModal({
           >
             {isProcessing ? "Processing..." : "Confirm & Send"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function WalletPickerModal({
+  isOpen,
+  isConnecting,
+  walletOptions,
+  selectedWalletId,
+  onClose,
+  onSelect
+}: {
+  isOpen: boolean;
+  isConnecting: boolean;
+  walletOptions: WalletOption[];
+  selectedWalletId: string | null;
+  onClose: () => void;
+  onSelect: (walletId: string) => void;
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-md">
+      <div className="w-full max-w-md rounded-[28px] border border-slate-800 bg-[linear-gradient(180deg,rgba(2,6,23,0.98),rgba(15,23,42,0.94))] p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-display text-2xl font-semibold text-slate-100">Connect Wallet</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Choose an injected EVM wallet to connect to ArcPay Treasury.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isConnecting}
+            className="rounded-full p-1 text-slate-500 transition hover:bg-slate-800 hover:text-slate-200"
+            aria-label="Close wallet picker"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-6 space-y-3">
+          {walletOptions.length > 0 ? (
+            walletOptions.map((wallet) => (
+              <button
+                key={wallet.id}
+                type="button"
+                onClick={() => onSelect(wallet.id)}
+                disabled={isConnecting}
+                className={`flex w-full items-center justify-between rounded-2xl border px-4 py-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  selectedWalletId === wallet.id
+                    ? "border-cyan-400/35 bg-cyan-500/10"
+                    : "border-slate-800 bg-slate-900/80 hover:border-cyan-400/30 hover:bg-slate-900"
+                }`}
+              >
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{wallet.name}</p>
+                  <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">
+                    {wallet.badge}
+                  </p>
+                </div>
+                <span className="rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300">
+                  {isConnecting && selectedWalletId === wallet.id ? "Connecting" : "Select"}
+                </span>
+              </button>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-4 text-sm text-red-300">
+              No compatible injected wallet was detected. Install MetaMask, Rabby, or another EVM wallet extension.
+            </div>
+          )}
         </div>
       </div>
     </div>

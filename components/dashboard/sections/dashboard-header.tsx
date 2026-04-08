@@ -11,6 +11,7 @@ type DashboardHeaderProps = {
   isConnecting: boolean;
   isMobileNavOpen: boolean;
   navLinks: NavLink[];
+  selectedWalletName: string | null;
   onConnect: () => void;
   onCopy: () => void;
   onDisconnect: () => void;
@@ -25,6 +26,7 @@ export function DashboardHeader({
   isConnecting,
   isMobileNavOpen,
   navLinks,
+  selectedWalletName,
   onConnect,
   onCopy,
   onDisconnect,
@@ -87,7 +89,11 @@ export function DashboardHeader({
                 <Wallet className="h-4 w-4" />
               )}
               <span className="hidden sm:inline">
-                {walletAddressLabel !== "Connect MetaMask" ? treasurySnapshot.walletLabel : "Connect Wallet"}
+                {walletAddressLabel !== "Connect Wallet"
+                  ? selectedWalletName
+                    ? `${selectedWalletName} Wallet`
+                    : treasurySnapshot.walletLabel
+                  : "Connect Wallet"}
               </span>
               <span className="rounded-full bg-white/15 px-2 py-1 text-xs font-medium text-cyan-50">
                 {walletAddressLabel}

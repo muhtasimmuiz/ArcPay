@@ -20,7 +20,6 @@ type TreasuryOverviewProps = {
   isWrongNetwork: boolean;
   syncStatus: "idle" | "success" | "error";
   networkStatusLabel: string;
-  onConnect: () => void;
   onSwitchNetwork: () => void;
   onOpenSend: () => void;
   onReceive: () => void;
@@ -42,7 +41,6 @@ export function TreasuryOverview({
   isWrongNetwork,
   syncStatus,
   networkStatusLabel,
-  onConnect,
   onSwitchNetwork,
   onOpenSend,
   onReceive,
@@ -98,7 +96,7 @@ export function TreasuryOverview({
                 ? "Synced from Arc Testnet"
                 : syncStatus === "error"
                   ? "Live sync degraded"
-                  : "Connect MetaMask to load live treasury data"}
+                  : "Connect a wallet to load live treasury data"}
             </div>
           </div>
 
@@ -132,8 +130,13 @@ export function TreasuryOverview({
           <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
             <p className="font-semibold uppercase tracking-[0.18em] text-amber-300">Wrong network</p>
             <p className="mt-1">
-              Switch MetaMask to Arc Testnet before sending funds or syncing live treasury activity.
+              Switch the selected wallet to Arc Testnet before sending funds or syncing live treasury activity.
             </p>
+            <div className="mt-3 rounded-xl border border-amber-400/15 bg-slate-950/25 px-3 py-3 text-xs leading-6 text-amber-100/90">
+              <p>Chain ID: {ARC_TESTNET.chainId}</p>
+              <p>RPC: {ARC_TESTNET.rpcUrl}</p>
+              <p>Explorer: {ARC_TESTNET.blockExplorerUrl}</p>
+            </div>
             <button
               type="button"
               onClick={onSwitchNetwork}

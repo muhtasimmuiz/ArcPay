@@ -36,9 +36,21 @@ type SyncStatus = "idle" | "success" | "error";
 type ArcEthereumProvider = ethers.Eip1193Provider & {
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+  providers?: ArcEthereumProvider[];
+  isMetaMask?: boolean;
+  isRabby?: boolean;
+  isCoinbaseWallet?: boolean;
+  isBraveWallet?: boolean;
 };
 
 const MANUAL_DISCONNECT_KEY = "arcpay:wallet:manually-disconnected";
+const SELECTED_WALLET_KEY = "arcpay:wallet:selected";
+
+export type WalletOption = {
+  id: string;
+  name: string;
+  badge: string;
+};
 
 declare global {
   interface Window {
@@ -52,6 +64,112 @@ function getInjectedProvider() {
   }
 
   return window.ethereum ?? null;
+}
+
+function getSelectedWalletId() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.sessionStorage.getItem(SELECTED_WALLET_KEY);
+}
+
+function setSelectedWalletId(value: string | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (value) {
+    window.sessionStorage.setItem(SELECTED_WALLET_KEY, value);
+    return;
+  }
+
+  window.sessionStorage.removeItem(SELECTED_WALLET_KEY);
+}
+
+function walletNameForProvider(provider: ArcEthereumProvider) {
+  if (provider.isRabby) {
+    return "Rabby";
+  }
+
+  if (provider.isMetaMask) {
+    return "MetaMask";
+  }
+
+  if (provider.isCoinbaseWallet) {
+    return "Coinbase Wallet";
+  }
+
+  if (provider.isBraveWallet) {
+    return "Brave Wallet";
+  }
+
+  return "Injected Wallet";
+}
+
+function walletIdForProvider(provider: ArcEthereumProvider, index: number) {
+  if (provider.isRabby) {
+    return "rabby";
+  }
+
+  if (provider.isMetaMask) {
+    return "metamask";
+  }
+
+  if (provider.isCoinbaseWallet) {
+    return "coinbase";
+  }
+
+  if (provider.isBraveWallet) {
+    return "brave";
+  }
+
+  return `injected-${index}`;
+}
+
+function discoverInjectedWallets() {
+  const injected = getInjectedProvider();
+  if (!injected) {
+    return [];
+  }
+
+  const providers =
+    Array.isArray(injected.providers) && injected.providers.length ? injected.providers : [injected];
+  const seen = new Set<ArcEthereumProvider>();
+
+  return providers.flatMap((provider, index) => {
+    if (!provider || seen.has(provider)) {
+      return [];
+    }
+
+    seen.add(provider);
+
+    return [
+      {
+        id: walletIdForProvider(provider, index),
+        name: walletNameForProvider(provider),
+        badge:
+          provider.isMetaMask || provider.isRabby || provider.isCoinbaseWallet || provider.isBraveWallet
+            ? "Detected"
+            : "Injected",
+        provider
+      }
+    ];
+  });
+}
+
+function buildWalletOptionState() {
+  const discovered = discoverInjectedWallets();
+
+  return {
+    discovered,
+    options: discovered.map(({ id, name, badge }) => ({
+      id,
+      name,
+      badge
+    })),
+    providerMap: new Map(discovered.map((wallet) => [wallet.id, wallet.provider]))
+  };
 }
 
 function getManualDisconnectFlag() {
@@ -126,7 +244,7 @@ async function ensureArcNetwork(provider: ArcEthereumProvider) {
           {
             chainId: chainIdHex,
             chainName: ARC_TESTNET.chainName,
-            rpcUrls: [ARC_TESTNET.rpcUrl],
+            rpcUrls: ARC_TESTNET.rpcUrls,
             blockExplorerUrls: [ARC_TESTNET.blockExplorerUrl],
             nativeCurrency: ARC_TESTNET.nativeCurrency
           }
@@ -156,6 +274,7 @@ export function useArcTreasury({
   const readProviderRef = useRef(
     new ethers.JsonRpcProvider(ARC_TESTNET.rpcUrl, ARC_TESTNET.chainId)
   );
+  const providerMapRef = useRef(new Map<string, ArcEthereumProvider>());
   const lastSyncErrorAtRef = useRef(0);
   const [copied, setCopied] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -173,11 +292,56 @@ export function useArcTreasury({
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [hasLoadedBalance, setHasLoadedBalance] = useState(false);
   const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
+  const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
+  const [selectedWalletIdState, setSelectedWalletIdState] = useState<string | null>(null);
+  const [selectedWalletName, setSelectedWalletName] = useState<string | null>(null);
   const [sendForm, setSendForm] = useState<SendFormState>({
     recipient: "",
     amount: "",
     error: ""
   });
+
+  const refreshWalletOptions = useCallback(() => {
+    const { discovered, options, providerMap } = buildWalletOptionState();
+    providerMapRef.current = providerMap;
+    setWalletOptions(options);
+
+    const rememberedWalletId = getSelectedWalletId();
+    if (rememberedWalletId && providerMap.has(rememberedWalletId)) {
+      setSelectedWalletIdState(rememberedWalletId);
+      setSelectedWalletName(discovered.find((wallet) => wallet.id === rememberedWalletId)?.name ?? null);
+      return;
+    }
+
+    const firstWallet = discovered[0];
+    setSelectedWalletIdState(firstWallet?.id ?? null);
+    setSelectedWalletName(firstWallet?.name ?? null);
+  }, []);
+
+  const getActiveProvider = useCallback(
+    (walletId?: string | null) => {
+      const requestedId = walletId ?? selectedWalletIdState ?? getSelectedWalletId();
+
+      if (requestedId) {
+        return providerMapRef.current.get(requestedId) ?? null;
+      }
+
+      const firstWallet = walletOptions[0];
+      return firstWallet ? providerMapRef.current.get(firstWallet.id) ?? null : null;
+    },
+    [selectedWalletIdState, walletOptions]
+  );
+
+  useEffect(() => {
+    refreshWalletOptions();
+
+    const handleInitialized = () => refreshWalletOptions();
+    window.addEventListener("ethereum#initialized", handleInitialized as EventListener);
+
+    return () => {
+      window.removeEventListener("ethereum#initialized", handleInitialized as EventListener);
+    };
+  }, [refreshWalletOptions]);
 
   const fetchTransferHistory = useCallback(async (provider: ethers.Provider, address: string) => {
     const checksummed = ethers.getAddress(address);
@@ -255,7 +419,7 @@ export function useArcTreasury({
 
   const refreshWalletData = useCallback(
     async (providedAddress?: string) => {
-      const injected = getInjectedProvider();
+      const injected = getActiveProvider();
       const nextAddress = providedAddress ?? walletAddress;
 
       if (!injected || !nextAddress) {
@@ -332,24 +496,37 @@ export function useArcTreasury({
         setIsActivityLoading(false);
       }
     },
-    [fetchTransferHistory, hasLoadedBalance, hasLoadedHistory, pushToast, walletAddress]
+    [fetchTransferHistory, getActiveProvider, hasLoadedBalance, hasLoadedHistory, pushToast, walletAddress]
   );
 
-  const connectWallet = useCallback(async () => {
-    const injected = getInjectedProvider();
+  const connectWallet = useCallback(async (walletId?: string) => {
+    const injected = getActiveProvider(walletId);
     if (!injected) {
       pushToast({
         tone: "error",
-        title: "MetaMask not detected",
-        description: "Install MetaMask to connect your Arc Testnet treasury wallet."
+        title: "Wallet not detected",
+        description: "Install MetaMask, Rabby, or another injected EVM wallet to continue."
       });
-      return;
+      return false;
     }
 
     setIsConnecting(true);
     setManualDisconnectFlag(false);
 
     try {
+      const resolvedWalletId =
+        walletId ??
+        [...providerMapRef.current.entries()].find(([, provider]) => provider === injected)?.[0] ??
+        null;
+      const resolvedWallet =
+        walletOptions.find((wallet) => wallet.id === resolvedWalletId) ?? null;
+
+      if (resolvedWalletId) {
+        setSelectedWalletIdState(resolvedWalletId);
+        setSelectedWalletId(resolvedWalletId);
+      }
+      setSelectedWalletName(resolvedWallet?.name ?? walletNameForProvider(injected));
+
       await ensureArcNetwork(injected);
       const browserProvider = new ethers.BrowserProvider(injected);
       const network = await browserProvider.getNetwork();
@@ -365,10 +542,11 @@ export function useArcTreasury({
       pushToast({
         tone: "success",
         title: "Wallet connected",
-        description: `Connected ${truncateAddress(nextAddress)} on Arc Testnet.`
+        description: `Connected ${truncateAddress(nextAddress)} with ${resolvedWallet?.name ?? walletNameForProvider(injected)} on Arc Testnet.`
       });
 
       await refreshWalletData(nextAddress);
+      return true;
     } catch (error) {
       console.error(error);
       pushToast({
@@ -376,18 +554,19 @@ export function useArcTreasury({
         title: "Connection failed",
         description: "The wallet connection was cancelled or the network switch did not complete."
       });
+      return false;
     } finally {
       setIsConnecting(false);
     }
-  }, [pushToast, refreshWalletData]);
+  }, [getActiveProvider, pushToast, refreshWalletData, walletOptions]);
 
   const switchToArcNetwork = useCallback(async () => {
-    const injected = getInjectedProvider();
+    const injected = getActiveProvider();
     if (!injected) {
       pushToast({
         tone: "error",
-        title: "MetaMask not detected",
-        description: "Install MetaMask to add and switch to Arc Testnet."
+        title: "Wallet not detected",
+        description: "Install MetaMask, Rabby, or another injected EVM wallet to add and switch to Arc Testnet."
       });
       return false;
     }
@@ -407,7 +586,7 @@ export function useArcTreasury({
       pushToast({
         tone: "success",
         title: "Network switched",
-        description: "MetaMask is now connected to Arc Testnet."
+        description: "The selected wallet is now connected to Arc Testnet."
       });
       return true;
     } catch (error) {
@@ -415,9 +594,9 @@ export function useArcTreasury({
       const message =
         error instanceof Error
           ? error.message.includes("user rejected")
-            ? "The Arc Testnet switch was rejected in MetaMask."
-            : "MetaMask could not add or switch to Arc Testnet automatically."
-          : "MetaMask could not add or switch to Arc Testnet automatically.";
+            ? "The Arc Testnet switch was rejected in the wallet."
+            : "The selected wallet could not add or switch to Arc Testnet automatically. Try adding the network manually with the official Arc Testnet RPC."
+          : "The selected wallet could not add or switch to Arc Testnet automatically. Try adding the network manually with the official Arc Testnet RPC.";
 
       pushToast({
         tone: "error",
@@ -428,7 +607,7 @@ export function useArcTreasury({
     } finally {
       setIsConnecting(false);
     }
-  }, [pushToast, refreshWalletData, walletAddress]);
+  }, [getActiveProvider, pushToast, refreshWalletData, walletAddress]);
 
   useEffect(() => {
     if (!copied) {
@@ -440,11 +619,11 @@ export function useArcTreasury({
   }, [copied]);
 
   useEffect(() => {
-    const injected = getInjectedProvider();
-    if (!injected) {
+    const resolvedProvider = getActiveProvider() ?? getInjectedProvider();
+    if (!resolvedProvider) {
       return;
     }
-    const availableProvider = injected;
+    const provider: ArcEthereumProvider = resolvedProvider;
 
     let cancelled = false;
 
@@ -456,12 +635,12 @@ export function useArcTreasury({
 
         // Restore any previously authorized wallet so returning users land on live
         // treasury data without manually reconnecting MetaMask each time.
-        const accounts = (await availableProvider.request({ method: "eth_accounts" })) as string[];
+        const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
         if (!accounts.length || cancelled) {
           return;
         }
 
-        const browserProvider = new ethers.BrowserProvider(availableProvider);
+        const browserProvider = new ethers.BrowserProvider(provider);
         const network = await browserProvider.getNetwork();
         setCurrentChainId(Number(network.chainId));
         const nextAddress = ethers.getAddress(accounts[0]);
@@ -480,10 +659,10 @@ export function useArcTreasury({
     return () => {
       cancelled = true;
     };
-  }, [refreshWalletData]);
+  }, [getActiveProvider, refreshWalletData]);
 
   useEffect(() => {
-    const injected = getInjectedProvider();
+    const injected = getActiveProvider() ?? getInjectedProvider();
     if (!injected?.on) {
       return;
     }
@@ -511,7 +690,7 @@ export function useArcTreasury({
         pushToast({
           tone: "error",
           title: "Wallet disconnected",
-          description: "MetaMask disconnected. Reconnect your treasury wallet to resume activity."
+          description: "The selected wallet disconnected. Reconnect your treasury wallet to resume activity."
         });
         return;
       }
@@ -540,7 +719,7 @@ export function useArcTreasury({
         pushToast({
           tone: "error",
           title: "Wrong network",
-          description: "MetaMask is not on Arc Testnet. Treasury transfers are temporarily disabled."
+          description: "The selected wallet is not on Arc Testnet. Treasury transfers are temporarily disabled."
         });
       }
 
@@ -556,7 +735,7 @@ export function useArcTreasury({
       injected.removeListener?.("accountsChanged", handleAccountsChanged);
       injected.removeListener?.("chainChanged", handleChainChanged);
     };
-  }, [pushToast, refreshWalletData, walletAddress]);
+  }, [getActiveProvider, pushToast, refreshWalletData, walletAddress]);
 
   useEffect(() => {
     if (!walletAddress || currentChainId !== ARC_TESTNET.chainId || isSending) {
@@ -590,7 +769,7 @@ export function useArcTreasury({
 
     let cancelled = false;
     const timeoutId = window.setTimeout(async () => {
-      const injected = getInjectedProvider();
+      const injected = getActiveProvider();
       if (!injected) {
         return;
       }
@@ -632,7 +811,7 @@ export function useArcTreasury({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [currentChainId, sendForm.amount, sendForm.recipient, walletAddress]);
+  }, [currentChainId, getActiveProvider, sendForm.amount, sendForm.recipient, walletAddress]);
 
   const dynamicSummaryStats = useMemo<SummaryStat[]>(() => {
     if (!walletAddress) {
@@ -660,7 +839,7 @@ export function useArcTreasury({
       ? "--"
       : `$${formatTokenAmount(balance)}`;
 
-  const walletButtonLabel = walletAddress ? truncateAddress(walletAddress) : "Connect MetaMask";
+  const walletButtonLabel = walletAddress ? truncateAddress(walletAddress) : "Connect Wallet";
   const isWrongNetwork = currentChainId !== null && currentChainId !== ARC_TESTNET.chainId;
   const networkStatusLabel = walletAddress
     ? isWrongNetwork
@@ -673,7 +852,7 @@ export function useArcTreasury({
       pushToast({
         tone: "error",
         title: "No wallet connected",
-        description: "Connect MetaMask before copying a treasury address."
+        description: "Connect a wallet before copying a treasury address."
       });
       return;
     }
@@ -700,7 +879,7 @@ export function useArcTreasury({
     const amount = sendForm.amount.trim();
 
     if (!walletAddress) {
-      setSendForm((current) => ({ ...current, error: "Connect MetaMask before sending funds." }));
+      setSendForm((current) => ({ ...current, error: "Connect a wallet before sending funds." }));
       return false;
     }
 
@@ -715,7 +894,7 @@ export function useArcTreasury({
     if (isWrongNetwork) {
       setSendForm((current) => ({
         ...current,
-        error: "Switch MetaMask to Arc Testnet before sending treasury funds."
+        error: "Switch the selected wallet to Arc Testnet before sending treasury funds."
       }));
       return false;
     }
@@ -751,9 +930,9 @@ export function useArcTreasury({
       return false;
     }
 
-    const injected = getInjectedProvider();
+    const injected = getActiveProvider();
     if (!injected) {
-      setSendForm((current) => ({ ...current, error: "MetaMask is not available in this browser." }));
+      setSendForm((current) => ({ ...current, error: "No compatible browser wallet is available." }));
       return false;
     }
 
@@ -815,7 +994,7 @@ export function useArcTreasury({
       const message =
         error instanceof Error
           ? error.message.includes("user rejected")
-            ? "Transaction rejected in MetaMask."
+            ? "Transaction rejected in the wallet."
             : error.message
           : "The transfer could not be completed.";
 
@@ -851,6 +1030,7 @@ export function useArcTreasury({
 
   function disconnectWallet() {
     setManualDisconnectFlag(true);
+    setSelectedWalletId(null);
     setWalletAddress(null);
     setCurrentChainId(null);
     setBalance(null);
@@ -866,6 +1046,8 @@ export function useArcTreasury({
       amount: "",
       error: ""
     });
+    setSelectedWalletIdState(null);
+    setSelectedWalletName(null);
 
     pushToast({
       tone: "success",
@@ -876,8 +1058,12 @@ export function useArcTreasury({
 
   return {
     copied,
+    refreshWalletOptions,
+    walletOptions,
     walletAddress,
     walletButtonLabel,
+    selectedWalletId: selectedWalletIdState,
+    selectedWalletName,
     currentBalanceLabel,
     dynamicSummaryStats,
     isConnecting,

@@ -82,7 +82,7 @@ export function ActivitySection({
           <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-6 text-center text-sm text-slate-400">
             {isWalletConnected
               ? "No recent USDC transfer history was found for this wallet."
-              : "Connect MetaMask to load real Arc Testnet transaction history."}
+              : "Connect a wallet to load real Arc Testnet transaction history."}
           </div>
         ) : (
           activityItems.map((item) => {

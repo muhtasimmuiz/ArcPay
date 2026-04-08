@@ -18,7 +18,7 @@ import {
   treasurySnapshot,
   vaultItems
 } from "@/components/dashboard/data";
-import { ConfirmationModal, type Toast, ToastViewport } from "@/components/dashboard/ui";
+import { ConfirmationModal, type Toast, ToastViewport, WalletPickerModal } from "@/components/dashboard/ui";
 import { ActivitySection } from "@/components/dashboard/sections/activity-section";
 import { DashboardHeader } from "@/components/dashboard/sections/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard/sections/dashboard-sidebar";
@@ -51,6 +51,7 @@ export function DashboardShell({
   >("all");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
+  const [isWalletPickerOpen, setIsWalletPickerOpen] = useState(false);
   const [selectedVaultId, setSelectedVaultId] = useState<VaultItem["id"]>("predictable-gas");
   const [isLiquiditySectionOpen, setIsLiquiditySectionOpen] = useState(false);
   const [liquidityAmount, setLiquidityAmount] = useState("");
@@ -115,9 +116,14 @@ export function DashboardShell({
     return merged.filter((item) => item.status === selectedFilter);
   }, [selectedFilter, treasury.historyItems, treasury.txState, treasury.walletAddress, treasurySnapshotProp.network, treasurySnapshotProp.tokenSymbol]);
 
+  function openWalletPicker() {
+    treasury.refreshWalletOptions();
+    setIsWalletPickerOpen(true);
+  }
+
   function openSendFlow() {
     if (!treasury.walletAddress) {
-      void treasury.connectWallet();
+      openWalletPicker();
       return;
     }
 
@@ -126,7 +132,7 @@ export function DashboardShell({
 
   function triggerReceive() {
     if (!treasury.walletAddress) {
-      void treasury.connectWallet();
+      openWalletPicker();
       return;
     }
 
@@ -158,7 +164,7 @@ export function DashboardShell({
 
   function handleLiquiditySubmit() {
     if (!treasury.walletAddress) {
-      void treasury.connectWallet();
+      openWalletPicker();
       return;
     }
 
@@ -206,6 +212,23 @@ export function DashboardShell({
           }
         }}
       />
+      <WalletPickerModal
+        isOpen={isWalletPickerOpen}
+        isConnecting={treasury.isConnecting}
+        walletOptions={treasury.walletOptions}
+        selectedWalletId={treasury.selectedWalletId}
+        onClose={() => {
+          if (!treasury.isConnecting) {
+            setIsWalletPickerOpen(false);
+          }
+        }}
+        onSelect={async (walletId) => {
+          const didConnect = await treasury.connectWallet(walletId);
+          if (didConnect) {
+            setIsWalletPickerOpen(false);
+          }
+        }}
+      />
 
       <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col">
         <DashboardHeader
@@ -214,7 +237,8 @@ export function DashboardShell({
           isConnecting={treasury.isConnecting}
           isMobileNavOpen={isMobileNavOpen}
           navLinks={navLinksProp}
-          onConnect={treasury.connectWallet}
+          selectedWalletName={treasury.selectedWalletName}
+          onConnect={openWalletPicker}
           onCopy={treasury.copyWallet}
           onDisconnect={treasury.disconnectWallet}
           onToggleMobileNav={() => setIsMobileNavOpen((current) => !current)}
@@ -241,7 +265,6 @@ export function DashboardShell({
               isWrongNetwork={treasury.isWrongNetwork}
               syncStatus={treasury.syncStatus}
               networkStatusLabel={treasury.networkStatusLabel}
-              onConnect={treasury.connectWallet}
               onSwitchNetwork={treasury.switchToArcNetwork}
               onOpenSend={openSendFlow}
               onReceive={triggerReceive}
@@ -277,7 +300,7 @@ export function DashboardShell({
         onAmountChange={setLiquidityAmount}
         onAllocationChange={setLiquidityAllocation}
         onClose={() => setIsLiquiditySectionOpen(false)}
-        onOpenConnect={treasury.connectWallet}
+        onOpenConnect={openWalletPicker}
         onPoolTypeChange={setLiquidityPoolType}
         onSubmit={handleLiquiditySubmit}
       />
